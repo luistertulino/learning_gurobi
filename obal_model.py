@@ -1,6 +1,8 @@
 from gurobipy import *
 
 num_voxels = 25 # range = 0-24
+range_voxels = range(num_voxels)
+
 tumor_voxels = [7, 8, 12, 13, 17, 21, 22] # Vt
 organs_risk_voxels = [6, 10, 11, 15, 16, 20] # Vor
 normal_voxels = [0, 1, 2, 3, 4, 5, 9, 14, 18, 19, 23, 24] # Vs
@@ -8,8 +10,10 @@ normal_voxels = [0, 1, 2, 3, 4, 5, 9, 14, 18, 19, 23, 24] # Vs
 angle_index = { 0 : 0, 90 : 1, 180 : 2, 270 : 3 }
 
 selected_angles = [0, 180]
+selected_angles_indices = [angle_index[i] for i in selected_angles]
 
 num_beamlets = 6
+range_beamlets = range(num_beamlets)
 
 influence_dose_matrix = [] # matrix A, indexed by beams x beamlets x voxels
                            # In this case: 4 x 6 x 25
@@ -54,13 +58,15 @@ influence_dose_matrix.append(A_270)
 
 # Next, the arrays that indicate the indexes of non-zero elements of A
 
-range_0_24 = range(25)
+non_zero_tumor_voxels = tumor_voxels
+non_zero_or_voxels = organs_risk_voxels
+non_zero_normal_voxels = normal_voxels
 
-Q_0   = [ range_0_24, range_0_24, range_0_24, range_0_24, range_0_24 ]
-Q_90  = Q_0
-Q_180 = Q_0
-Q_270 = Q_0
+Sor = 30 # upper bound on organs at risk
+Ss = 10 # upper bound on healthy tissue
+D = 50 # dose prescription for tumor
 
+importance_factors = [0.3, 0.1, 0.3, 0.3]
 
 try:
 
@@ -82,6 +88,34 @@ try:
     epsilon_plus  = m.addVars(num_voxels, lb=0.0, ub=GRB.INFINITY, obj=0.0, vtype=GRB.CONTINUOUS, name="epsilon_plus" )
     epsilon_minus = m.addVars(num_voxels, lb=0.0, ub=GRB.INFINITY, obj=0.0, vtype=GRB.CONTINUOUS, name="epsilon_minus")
 
+    m.addConstrs( (influence_dose_matrix[b][q][v] * x[b,q] == Sor + theta_plus[v]   - theta_minus[v]   for b in selected_angles_indices for q in range_beamlets for v in non_zero_or_voxels    ), "deviation_or")
+    m.addConstrs( (influence_dose_matrix[b][q][v] * x[b,q] == Ss  + delta_plus[v]   - delta_minus[v]   for b in selected_angles_indices for q in range_beamlets for v in non_zero_normal_voxels), "deviation_s" )
+    m.addConstrs( (influence_dose_matrix[b][q][v] * x[b,q] == D   + epsilon_plus[v] - epsilon_minus[v] for b in selected_angles_indices for q in range_beamlets for v in non_zero_tumor_voxels ), "deviation_t" )
+
+    """
+    f1 = m.addVars(lb = 0, ub = GRB.INFINITY, obj = 0, vtype = GRB.CONTINUOUS, name="f1")
+    f2 = m.addVars(lb = 0, ub = GRB.INFINITY, obj = 0, vtype = GRB.CONTINUOUS, name="f2")
+    f3 = m.addVars(lb = 0, ub = GRB.INFINITY, obj = 0, vtype = GRB.CONTINUOUS, name="f3")
+    f4 = m.addVars(lb = 0, ub = GRB.INFINITY, obj = 0, vtype = GRB.CONTINUOUS, name="f4")
+    """
+    f = m.addVars(range(4), lb = 0, ub = GRB.INFINITY, obj = 0, vtype = GRB.CONTINUOUS, name="f")
+
+    m.addConstr(f[0] == quicksum(theta_plus[i]    for i in range_voxels) )
+    m.addConstr(f[1] == quicksum(delta_plus[i]    for i in range_voxels) )
+    m.addConstr(f[2] == quicksum(epsilon_plus[i]  for i in range_voxels) )
+    m.addConstr(f[3] == quicksum(epsilon_minus[i] for i in range_voxels) )
+
+    g = LinExpr()
+    for i in range(4):
+        g.addTerms(importance_factors[i], f[i])
+
+    m.setObjective(g)
+
+    m.optimize()
+
+    print(m.getObjective().getValue())
+    for i in range(4):
+        print(f[i])
 
 
 except GurobiError as e:
