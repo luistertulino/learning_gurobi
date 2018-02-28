@@ -66,7 +66,7 @@ Sor = 30 # upper bound on organs at risk
 Ss = 10 # upper bound on healthy tissue
 D = 50 # dose prescription for tumor
 
-importance_factors = [0.3, 0.1, 0.3, 0.3]
+importance_factors = [0.2, 0.1, 0.3, 0.4]
 
 try:
 
@@ -88,9 +88,9 @@ try:
     epsilon_plus  = m.addVars(num_voxels, lb=0.0, ub=GRB.INFINITY, obj=0.0, vtype=GRB.CONTINUOUS, name="epsilon_plus" )
     epsilon_minus = m.addVars(num_voxels, lb=0.0, ub=GRB.INFINITY, obj=0.0, vtype=GRB.CONTINUOUS, name="epsilon_minus")
 
-    m.addConstrs( (influence_dose_matrix[b][q][v] * x[b,q] == Sor + theta_plus[v]   - theta_minus[v]   for b in selected_angles_indices for q in range_beamlets for v in non_zero_or_voxels    ), "deviation_or")
-    m.addConstrs( (influence_dose_matrix[b][q][v] * x[b,q] == Ss  + delta_plus[v]   - delta_minus[v]   for b in selected_angles_indices for q in range_beamlets for v in non_zero_normal_voxels), "deviation_s" )
-    m.addConstrs( (influence_dose_matrix[b][q][v] * x[b,q] == D   + epsilon_plus[v] - epsilon_minus[v] for b in selected_angles_indices for q in range_beamlets for v in non_zero_tumor_voxels ), "deviation_t" )
+    m.addConstrs( (quicksum(quicksum(influence_dose_matrix[b][q][v] * x[b,q] for b in selected_angles_indices) for q in range_beamlets) == Sor + theta_plus[v]   - theta_minus[v]   for v in non_zero_or_voxels    ), "deviation_or")
+    m.addConstrs( (quicksum(quicksum(influence_dose_matrix[b][q][v] * x[b,q] for b in selected_angles_indices) for q in range_beamlets) == Ss  + delta_plus[v]   - delta_minus[v]   for v in non_zero_normal_voxels), "deviation_s" )
+    m.addConstrs( (quicksum(quicksum(influence_dose_matrix[b][q][v] * x[b,q] for b in selected_angles_indices) for q in range_beamlets) == D   + epsilon_plus[v] - epsilon_minus[v] for v in non_zero_tumor_voxels ), "deviation_t" )
 
     """
     f1 = m.addVars(lb = 0, ub = GRB.INFINITY, obj = 0, vtype = GRB.CONTINUOUS, name="f1")
@@ -109,13 +109,45 @@ try:
     for i in range(4):
         g.addTerms(importance_factors[i], f[i])
 
-    m.setObjective(g)
+    m.setObjective(g, GRB.MINIMIZE)
 
     m.optimize()
 
     print(m.getObjective().getValue())
     for i in range(4):
         print(f[i])
+
+    # Compute the deposited dose in each voxel
+
+    dose_on_voxels = [LinExpr() for i in range(num_voxels)]
+        
+    for v in tumor_voxels:
+        for b in selected_angles_indices:
+            for q in range_beamlets:
+                dose_on_voxels[v] += influence_dose_matrix[b][q][v] * x[b,q]
+
+
+    for v in organs_risk_voxels:
+        for b in selected_angles_indices:
+            for q in range_beamlets:
+                dose_on_voxels[v] += influence_dose_matrix[b][q][v] * x[b,q]
+
+
+    for v in normal_voxels:
+        for b in selected_angles_indices:
+            for q in range_beamlets:
+                dose_on_voxels[v] += influence_dose_matrix[b][q][v] * x[b,q]
+
+    print("Dose on voxels:")
+    i = 0
+    for v in dose_on_voxels:
+        print(i, v.getValue())
+        i+=1
+
+    print("\n\n")
+    for b in selected_angles_indices:
+            for q in range_beamlets:
+                print(x[b,q].getValue())
 
 
 except GurobiError as e:
