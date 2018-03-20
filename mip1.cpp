@@ -1,4 +1,4 @@
-#include "../../../../opt/gurobi752/linux64/include/gurobi_c++.h"
+#include "gurobi_c++.h"
 using namespace std;
 
 int
